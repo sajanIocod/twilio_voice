@@ -487,7 +487,37 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         self.unregisterTokens(token: token, deviceToken: deviceToken)
     }
     
-    func unregisterTokens(token: String, deviceToken: Data) {
+//    func unregisterTokens(token: String, deviceToken: Data) {
+//        
+//        
+//        TwilioVoiceSDK.unregister(accessToken: token, deviceToken: deviceToken) { (error) in
+//            if let error = error {
+//                self.sendPhoneCallEvents(description: "LOG|An error occurred while unregistering: \(error.localizedDescription)", isError: false)
+//            } else {
+//                self.sendPhoneCallEvents(description: "LOG|Successfully unregistered from VoIP push notifications.", isError: false)
+//            }
+//        }
+//
+//        //DO NOT REMOVE DEVICE TOKEN , AS IT IS UNNECESSARY AND USER WILL HAVE TO RESTART THE APP TO GET NEW DEVICE TOKEN 
+//        //IF WE REMOVED FROM HERE , WHICH WILL CAUSE TO FAILURE IN REGISTRATION 
+////        UserDefaults.standard.removeObject(forKey: kCachedDeviceToken)
+//        
+//        // Remove the cached binding as credentials are invalidated
+//        UserDefaults.standard.removeObject(forKey: kCachedBindingDate)
+//    }
+    
+    func unregisterTokens(token: String?, deviceToken: Data?) {
+        // Check if both token and deviceToken are available
+        guard let token = token else {
+            self.sendPhoneCallEvents(description: "LOG|Unregister failed: Access token is missing", isError: false)
+            return
+        }
+        
+        guard let deviceToken = deviceToken else {
+            self.sendPhoneCallEvents(description: "LOG|Unregister failed: Device token is missing", isError: false)
+            return
+        }
+        
         TwilioVoiceSDK.unregister(accessToken: token, deviceToken: deviceToken) { (error) in
             if let error = error {
                 self.sendPhoneCallEvents(description: "LOG|An error occurred while unregistering: \(error.localizedDescription)", isError: false)
@@ -496,9 +526,9 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
             }
         }
 
-        //DO NOT REMOVE DEVICE TOKEN , AS IT IS UNNECESSARY AND USER WILL HAVE TO RESTART THE APP TO GET NEW DEVICE TOKEN 
-        //IF WE REMOVED FROM HERE , WHICH WILL CAUSE TO FAILURE IN REGISTRATION 
-//        UserDefaults.standard.removeObject(forKey: kCachedDeviceToken)
+        // DO NOT REMOVE DEVICE TOKEN , AS IT IS UNNECESSARY AND USER WILL HAVE TO RESTART THE APP TO GET NEW DEVICE TOKEN
+        // IF WE REMOVED FROM HERE , WHICH WILL CAUSE TO FAILURE IN REGISTRATION
+        // UserDefaults.standard.removeObject(forKey: kCachedDeviceToken)
         
         // Remove the cached binding as credentials are invalidated
         UserDefaults.standard.removeObject(forKey: kCachedBindingDate)
@@ -559,13 +589,71 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
          */
         UserDefaults.standard.set(Date(), forKey: kCachedBindingDate)
         
-        var from:String = callInvite.from ?? defaultCaller
-        from = from.replacingOccurrences(of: "client:", with: "")
+        var from: String = callInvite.from ?? "defaultCaller"
         
-        self.sendPhoneCallEvents(description: "Ringing|\(from)|\(callInvite.to)|Incoming\(formatCustomParams(params: callInvite.customParameters))", isError: false)
-        reportIncomingCall(from: from, uuid: callInvite.uuid)
+        // Print the 'from' value to debug
+        print("Debug: callInvite.from = \(from)")
+        
+        // Extract client info
+        if let clientInfo = extractClientInfo(from: from) {
+            from = clientInfo.userNumber
+            let name = clientInfo.clientName.replacingOccurrences(of: "_", with: " ")
+            
+            self.sendPhoneCallEvents(description: "Ringing|\(from)|\(callInvite.to)|Incoming\(formatCustomParams(params: callInvite.customParameters))", isError: false)
+            reportIncomingCall(from: name, uuid: callInvite.uuid)
+        } else {
+            // Handle the case where the format is not as expected
+            from = "Easify User"
+            let name = "Easify User"
+            
+            self.sendPhoneCallEvents(description: "Ringing|\(from)|\(callInvite.to)|Incoming\(formatCustomParams(params: callInvite.customParameters))", isError: false)
+            reportIncomingCall(from: name, uuid: callInvite.uuid)
+        }
+        
         self.callInvite = callInvite
     }
+
+    func extractClientInfo(from input: String) -> (clientName: String, userNumber: String)? {
+        // Define the regular expression pattern
+        let pattern = #"client:([^:]+):user_number:(.+)"#
+        
+        do {
+            // Create a regular expression object
+            let regex = try NSRegularExpression(pattern: pattern, options: [])
+            
+            // Search for the first match in the input string
+            let nsRange = NSRange(input.startIndex..., in: input)
+            if let match = regex.firstMatch(in: input, range: nsRange) {
+                // Extract the client name and user number from the matched groups
+                if let clientNameRange = Range(match.range(at: 1), in: input),
+                   let userNumberRange = Range(match.range(at: 2), in: input) {
+                    
+                    var clientName = String(input[clientNameRange])
+                    let userNumber = String(input[userNumberRange])
+                    
+                    // Replace underscores with spaces in the client name
+                    clientName = clientName.replacingOccurrences(of: "_", with: " ")
+                    
+                    // Debug prints
+                    print("Debug: Extracted clientName = \(clientName)")
+                    print("Debug: Extracted userNumber = \(userNumber)")
+                    
+                    return (clientName: clientName, userNumber: userNumber)
+                } else {
+                    print("Debug: Could not extract ranges from match")
+                }
+            } else {
+                print("Debug: No match found")
+            }
+        } catch {
+            print("Debug: Invalid regex pattern - \(error.localizedDescription)")
+        }
+        
+        // Return nil if the input string does not match the expected pattern
+        return nil
+    }
+
+
     
     func formatCustomParams(params: [String:Any]?)->String{
         guard let customParameters = params else{return ""}
@@ -633,20 +721,34 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
     
     // MARK: TVOCallDelegate
     public func callDidStartRinging(call: Call) {
-        let direction = (self.callOutgoing ? "Outgoing" : "Incoming")
-        let from = (call.from ?? self.identity)
-        let to = (call.to ?? self.callTo)
-        self.sendPhoneCallEvents(description: "Ringing|\(from)|\(to)|\(direction)", isError: false)
         
-        //self.placeCallButton.setTitle("Ringing", for: .normal)
-    }
+        
+        
+        let direction = (self.callOutgoing ? "Outgoing" : "Incoming")
+        
+        if let clientInfo = extractClientInfo(from: call.from ?? self.identity) {
+            let from = clientInfo.userNumber
+            let to = (call.to ?? self.callTo)
+            self.sendPhoneCallEvents(description: "Ringing|\(from)|\(to)|\(direction)", isError: false)
+        } else {
+            let from = (call.from ?? self.identity)
+            let to = (call.to ?? self.callTo)
+            self.sendPhoneCallEvents(description: "Ringing|\(from)|\(to)|\(direction)", isError: false)
+            
+            //self.placeCallButton.setTitle("Ringing", for: .normal)
+        }}
     
     public func callDidConnect(call: Call) {
         let direction = (self.callOutgoing ? "Outgoing" : "Incoming")
-        let from = (call.from ?? self.identity)
-        let to = (call.to ?? self.callTo)
-        self.sendPhoneCallEvents(description: "Connected|\(from)|\(to)|\(direction)", isError: false)
-        
+        if let clientInfo = extractClientInfo(from: call.from ?? self.identity) {
+            let from = clientInfo.userNumber
+            let to = (call.to ?? self.callTo)
+            self.sendPhoneCallEvents(description: "Connected|\(from)|\(to)|\(direction)", isError: false)
+        } else {
+            let from = (call.from ?? self.identity)
+            let to = (call.to ?? self.callTo)
+            self.sendPhoneCallEvents(description: "Connected|\(from)|\(to)|\(direction)", isError: false)
+        }
         if let callKitCompletionCallback = callKitCompletionCallback {
             callKitCompletionCallback(true)
         }
@@ -858,7 +960,7 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
             
             let callUpdate = CXCallUpdate()
             callUpdate.remoteHandle = callHandle
-            callUpdate.localizedCallerName = self.clients[handle] ?? self.clients["defaultCaller"] ?? self.defaultCaller
+            callUpdate.localizedCallerName = handle
             callUpdate.supportsDTMF = false
             callUpdate.supportsHolding = true
             callUpdate.supportsGrouping = false
@@ -875,7 +977,7 @@ public class SwiftTwilioVoicePlugin: NSObject, FlutterPlugin,  FlutterStreamHand
         let callUpdate = CXCallUpdate()
         callUpdate.remoteHandle = callHandle
         // If the client is not registered, USE THE THE FROM NUMBER
-        callUpdate.localizedCallerName = formatUSPhoneNumber(from)
+        callUpdate.localizedCallerName = from
         callUpdate.supportsDTMF = true
         callUpdate.supportsHolding = true
         callUpdate.supportsGrouping = false
