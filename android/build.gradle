@@ -26,7 +26,7 @@ apply plugin: 'kotlin-android'
 apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
-    namespace 'com.example.twiliovoice'
+    namespace 'com.twilio.twilio_voice'
     compileSdk 34
 
     compileOptions {
